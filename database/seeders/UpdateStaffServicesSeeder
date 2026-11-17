@@ -1,0 +1,193 @@
+<?php
+// database/seeders/UpdateStaffServicesSeeder.php
+// Use this if you want to update existing staff without resetting the database
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use App\Models\Staff;
+use App\Models\Service;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+
+class UpdateStaffServicesSeeder extends Seeder
+{
+    /**
+     * Run the database seeds.
+     * This updates existing staff to be multi-skilled without losing other data
+     */
+    public function run(): void
+    {
+        echo "🔄 Updating staff service assignments...\n\n";
+
+        // Get service IDs by category
+        $hairServices = Service::where('category', 'hair')->pluck('id')->toArray();
+        $beautyServices = Service::where('category', 'beauty')->pluck('id')->toArray();
+        $nailServices = Service::where('category', 'nails')->pluck('id')->toArray();
+        $spaServices = Service::where('category', 'spa')->pluck('id')->toArray();
+
+        echo "📋 Services by category:\n";
+        echo "  Hair: " . count($hairServices) . " services\n";
+        echo "  Beauty: " . count($beautyServices) . " services\n";
+        echo "  Nails: " . count($nailServices) . " services\n";
+        echo "  Spa: " . count($spaServices) . " services\n\n";
+
+        // Get existing staff
+        $staff = Staff::with('user')->get();
+
+        if ($staff->count() < 3) {
+            echo "⚠️  Warning: Less than 3 staff members found. Creating additional staff...\n";
+            $this->createAdditionalStaff();
+            $staff = Staff::with('user')->get();
+        }
+
+        echo "👥 Found {$staff->count()} staff members\n\n";
+
+        // Clear existing assignments
+        DB::table('staff_service')->truncate();
+        echo "🗑️  Cleared old service assignments\n\n";
+
+        // Strategy: Make staff multi-skilled
+        foreach ($staff as $index => $staffMember) {
+            echo "Updating {$staffMember->user->name}...\n";
+            
+            switch ($index) {
+                case 0:
+                    // First staff: Hair + Beauty
+                    $services = array_merge($hairServices, $beautyServices);
+                    $staffMember->update(['specialization' => 'Hair & Beauty Specialist']);
+                    echo "  ✓ Can now handle: Hair + Beauty services\n";
+                    break;
+                    
+                case 1:
+                    // Second staff: Beauty + Nails
+                    $services = array_merge($beautyServices, $nailServices);
+                    $staffMember->update(['specialization' => 'Beauty & Nails Expert']);
+                    echo "  ✓ Can now handle: Beauty + Nails services\n";
+                    break;
+                    
+                case 2:
+                    // Third staff: ALL SERVICES (versatile)
+                    $services = array_merge($hairServices, $beautyServices, $nailServices, $spaServices);
+                    $staffMember->update(['specialization' => 'Full Service Specialist']);
+                    echo "  ✓ Can now handle: ALL services (versatile)\n";
+                    break;
+                    
+                case 3:
+                    // Fourth staff: Hair + Spa
+                    $services = array_merge($hairServices, $spaServices);
+                    $staffMember->update(['specialization' => 'Hair & Spa Therapist']);
+                    echo "  ✓ Can now handle: Hair + Spa services\n";
+                    break;
+                    
+                default:
+                    // Additional staff: Nails + Spa
+                    $services = array_merge($nailServices, $spaServices);
+                    $staffMember->update(['specialization' => 'Nails & Spa Specialist']);
+                    echo "  ✓ Can now handle: Nails + Spa services\n";
+                    break;
+            }
+            
+            // Attach services
+            $staffMember->services()->attach($services);
+            echo "  ✓ Assigned " . count($services) . " services\n\n";
+        }
+
+        // Verification
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        echo "✅ Update Complete! Verification:\n";
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+
+        foreach (Staff::with('user', 'services')->get() as $s) {
+            $serviceCount = $s->services->count();
+            $categories = $s->services->pluck('category')->unique()->sort()->values();
+            
+            echo "👤 {$s->user->name}\n";
+            echo "   Specialization: {$s->specialization}\n";
+            echo "   Can handle: {$serviceCount} services across " . $categories->count() . " categories\n";
+            echo "   Categories: " . $categories->join(', ') . "\n\n";
+        }
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        echo "🎯 Multi-Service Booking Examples:\n";
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+        
+        $testCombos = [
+            ['Haircut', 'Facial Treatment'] => 'Hair + Beauty',
+            ['Facial Treatment', 'Manicure'] => 'Beauty + Nails',
+            ['Haircut', 'Body Massage'] => 'Hair + Spa',
+            ['Manicure', 'Foot Spa'] => 'Nails + Spa',
+            ['Haircut', 'Facial Treatment', 'Manicure'] => 'All (3 categories)',
+        ];
+
+        foreach ($testCombos as $services => $description) {
+            $serviceNames = array_keys($services);
+            $serviceIds = Service::whereIn('name', $serviceNames)->pluck('id')->toArray();
+            
+            $availableStaff = Staff::whereHas('services', function($q) use ($serviceIds) {
+                    $q->whereIn('service_id', $serviceIds);
+                })
+                ->get()
+                ->filter(function($staff) use ($serviceIds) {
+                    $staffServiceIds = $staff->services->pluck('id')->toArray();
+                    return count(array_intersect($staffServiceIds, $serviceIds)) === count($serviceIds);
+                });
+            
+            $staffNames = $availableStaff->pluck('user.name')->join(', ');
+            $emoji = $availableStaff->count() > 0 ? '✅' : '❌';
+            
+            echo "{$emoji} " . implode(' + ', $serviceNames) . "\n";
+            echo "   → Available staff: {$staffNames}\n\n";
+        }
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        echo "✨ Staff are now multi-skilled!\n";
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    }
+
+    /**
+     * Create additional staff if needed
+     */
+    private function createAdditionalStaff()
+    {
+        $additionalStaff = [
+            [
+                'name' => 'Isabel Garcia',
+                'email' => 'isabel@luminosabelleza.com',
+                'specialization' => 'Hair & Spa Therapist',
+            ],
+            [
+                'name' => 'Carmen Lopez',
+                'email' => 'carmen@luminosabelleza.com',
+                'specialization' => 'Nails & Spa Specialist',
+            ],
+        ];
+
+        foreach ($additionalStaff as $staffData) {
+            // Check if user already exists
+            $user = User::where('email', $staffData['email'])->first();
+            
+            if (!$user) {
+                $user = User::create([
+                    'name' => $staffData['name'],
+                    'email' => $staffData['email'],
+                    'password' => bcrypt('password'),
+                    'role' => 'staff',
+                    'phone' => '+6391234567' . rand(80, 99),
+                ]);
+            }
+
+            // Create staff profile if doesn't exist
+            if (!Staff::where('user_id', $user->id)->exists()) {
+                Staff::create([
+                    'user_id' => $user->id,
+                    'specialization' => $staffData['specialization'],
+                    'bio' => 'Professional stylist with expertise in multiple service categories.',
+                    'is_available' => true,
+                ]);
+                
+                echo "  ✓ Created staff: {$staffData['name']}\n";
+            }
+        }
+    }
+}
